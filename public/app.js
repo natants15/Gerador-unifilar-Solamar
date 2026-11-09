@@ -286,7 +286,7 @@ function renderModelos(lista) {
     : '<li class="nota">Nenhum modelo na biblioteca ainda.</li>';
 }
 async function carregarModelos() {
-  try { const r = await (await fetch('/api/modelos')).json(); renderModelos(r.modelos); } catch { /* sem biblioteca */ }
+  try { const r = await lerJson(await fetch('/api/modelos')); renderModelos(r.modelos); } catch { /* sem biblioteca */ }
 }
 async function enviarModelos(arquivos) {
   if (!arquivos?.length) return;
@@ -295,7 +295,7 @@ async function enviarModelos(arquivos) {
   $('#statusModelos').textContent = `Guardando ${arquivos.length} arquivo(s)…`;
   try {
     const res = await fetch('/api/modelos', { method: 'POST', body: fd });
-    const j = await res.json();
+    const j = await lerJson(res);
     if (!res.ok) throw new Error(j.erro);
     renderModelos(j.modelos);
     const msgs = [];
@@ -314,14 +314,24 @@ $('#listaModelos').addEventListener('click', async (ev) => {
   const id = ev.target.dataset.rmodelo;
   if (!id || !confirm('Remover este modelo da biblioteca?')) return;
   const res = await fetch(`/api/modelos/${id}`, { method: 'DELETE' });
-  if (res.ok) renderModelos((await res.json()).modelos);
+  if (res.ok) renderModelos((await lerJson(res)).modelos);
 });
 
 // ---------- API ----------
+// Lê a resposta como JSON; se o servidor devolver outra coisa (página de erro, servidor
+// desatualizado), mostra uma mensagem clara em vez de "Unexpected token '<'".
+async function lerJson(res) {
+  const txt = await res.text();
+  try { return JSON.parse(txt); } catch {
+    if (res.status === 413) return { erro: 'Arquivo grande demais para o servidor.' };
+    if (res.status === 404) return { erro: 'O servidor não reconheceu o pedido. Atualize o app (git pull) e reinicie o npm start.' };
+    return { erro: `Resposta inesperada do servidor (HTTP ${res.status}). Reinicie o npm start e tente de novo.` };
+  }
+}
 async function api(url, corpo) {
   try {
     const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
-    const j = await res.json();
+    const j = await lerJson(res);
     if (!res.ok) throw new Error(j.erro || res.statusText);
     return j;
   } catch (err) {
@@ -367,7 +377,7 @@ async function enviarArquivo(arquivo) {
   }
   try {
     const res = await fetch('/api/extrair', { method: 'POST', body: fd });
-    const j = await res.json();
+    const j = await lerJson(res);
     if (!res.ok) throw new Error(j.erro || res.statusText);
     $('#statusLeitura').textContent = '';
     abrirRevisao(j, j.avisos, j.metodo);
@@ -432,7 +442,7 @@ $$('[data-gerar]').forEach((b) => b.addEventListener('click', async () => {
   b.disabled = true;
   try {
     const res = await fetch(`/api/gerar/${tipo}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dados: estado.dados, ignorarErros: true }) });
-    if (!res.ok) throw new Error((await res.json()).erro);
+    if (!res.ok) throw new Error((await lerJson(res)).erro);
     const nome = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') || '')?.[1] || `${tipo}`;
     baixar(await res.blob(), nome);
   } catch (err) { alert('Erro ao gerar: ' + err.message); } finally { b.disabled = false; }
@@ -447,7 +457,7 @@ function baixar(blob, nome) {
 }
 
 // ---------- início ----------
-estado.config = await (await fetch('/api/config')).json();
+estado.config = await lerJson(await fetch('/api/config'));
 carregarModelos();
 
 // Concessionária escolhida antes da leitura (lembrada neste navegador)

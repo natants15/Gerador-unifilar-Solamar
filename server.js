@@ -13,9 +13,11 @@ import { gerarPlanilhaMateriais } from './src/materiais.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } });
+const LIMITE_MB = 50;
+const MAX_MODELOS = 30;
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: LIMITE_MB * 1024 * 1024 } });
 
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const nomeArquivo = (dados, sufixo, ext) => {
@@ -93,7 +95,7 @@ app.get('/api/modelos', async (_req, res) => {
   res.json({ modelos: await listarModelos(), extensoes: EXTENSOES, usaIA: claudeDisponivel() });
 });
 
-app.post('/api/modelos', upload.array('arquivos', 30), async (req, res) => {
+app.post('/api/modelos', upload.array('arquivos', MAX_MODELOS), async (req, res) => {
   try {
     if (!req.files?.length) return res.status(400).json({ erro: 'Envie ao menos um arquivo.' });
     const r = await salvarModelos(req.files);
@@ -158,6 +160,28 @@ app.post('/api/gerar/:tipo', async (req, res) => {
     console.error(err);
     res.status(500).json({ erro: `Falha ao gerar: ${err.message}` });
   }
+});
+
+// Rotas da API inexistentes e erros (arquivo grande demais, campo errado, JSON inválido)
+// sempre respondem em JSON, para a página mostrar uma mensagem compreensível.
+app.use('/api', (_req, res) => res.status(404).json({ erro: 'Rota não encontrada. Atualize o app (git pull) e reinicie o servidor.' }));
+
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  let status = err.status || err.statusCode || 500;
+  let erro = `Erro no servidor: ${err.message}`;
+  if (err instanceof multer.MulterError) {
+    status = 400;
+    if (err.code === 'LIMIT_FILE_SIZE') { status = 413; erro = `Arquivo grande demais (máximo ${LIMITE_MB} MB). Reduza o PDF ou envie só as páginas necessárias.`; }
+    else if (err.code === 'LIMIT_FILE_COUNT' || (err.code === 'LIMIT_UNEXPECTED_FILE' && err.field === 'arquivos')) erro = `Envie no máximo ${MAX_MODELOS} modelos por vez.`;
+    else if (err.code === 'LIMIT_UNEXPECTED_FILE') erro = 'Envie um arquivo por vez.';
+    else erro = `Falha no envio do arquivo: ${err.message}`;
+  } else if (err.type === 'entity.too.large') {
+    erro = 'Os dados do projeto são grandes demais para enviar de uma vez.';
+  } else if (err.type === 'entity.parse.failed') {
+    erro = 'Os dados enviados não são um JSON válido.';
+  }
+  res.status(status).json({ erro });
 });
 
 export default app;
