@@ -1,0 +1,195 @@
+import express from 'express';
+import multer from 'multer';
+import JSZip from 'jszip';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { LISTA_CONCESSIONARIAS, getConcessionaria } from './src/concessionarias.js';
+import { lerVistoria, claudeDisponivel, MODELO_CLAUDE, sugerirComModelos, aplicarSugestoes } from './src/extracao.js';
+import { listarModelos, salvarModelos, removerModelo, textosModelos, materiaisSugeridos, EXTENSOES } from './src/modelos.js';
+import { completar, calcular, validar, gerarMateriais, mesclar, projetoVazio } from './src/projeto.js';
+import { desenharUnifilar } from './src/unifilar.js';
+import { gerarMemorial } from './src/memorial.js';
+import { gerarPlanilhaMateriais } from './src/materiais.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const app = express();
+const LIMITE_MB = 50;
+const MAX_MODELOS = 30;
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: LIMITE_MB * 1024 * 1024 } });
+
+app.use(express.json({ limit: '25mb' }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+const nomeArquivo = (dados, sufixo, ext) => {
+  const base = String(dados?.cliente?.nome || 'projeto')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'projeto';
+  return `${base}-${sufixo}.${ext}`;
+};
+
+function revisao(dados) {
+  const d = mesclar(projetoVazio(), dados);
+  return {
+    calculo: calcular(d),
+    validacao: validar(d),
+    materiaisPadrao: gerarMateriais(d),
+    svg: desenharUnifilar(d).toSVG(),
+  };
+}
+
+app.get('/api/config', (_req, res) => {
+  res.json({ concessionarias: LISTA_CONCESSIONARIAS, leituraIA: claudeDisponivel(), modelo: claudeDisponivel() ? MODELO_CLAUDE : null, projetoVazio: projetoVazio() });
+});
+
+app.post('/api/extrair', upload.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ erro: 'Envie o arquivo da vistoria.' });
+    const lido = await lerVistoria(req.file.buffer, req.file.mimetype, req.file.originalname);
+    const avisos = [...(lido.avisos || [])];
+
+    // Concessionária escolhida pelo usuário tem prioridade sobre a detectada no documento
+    const escolhida = getConcessionaria(req.body?.concessionaria);
+    if (escolhida) {
+      if (lido.dados.concessionaria && lido.dados.concessionaria !== escolhida.id) {
+        avisos.push(`O documento indica ${getConcessionaria(lido.dados.concessionaria)?.nome || lido.dados.concessionaria}, mas foi usada a concessionária escolhida (${escolhida.nome}).`);
+      }
+      lido.dados.concessionaria = escolhida.id;
+      const dist = String(req.body?.distribuidora || '');
+      lido.dados.distribuidora = escolhida.distribuidoras.includes(dist) ? dist : (lido.dados.distribuidora && escolhida.distribuidoras.includes(lido.dados.distribuidora) ? lido.dados.distribuidora : escolhida.distribuidoras[0]);
+      lido.campos = (lido.campos || []).filter((c) => c !== 'concessionaria' && c !== 'distribuidora');
+    }
+
+    // Modelos de outros projetos: a IA sugere o que a vistoria não traz
+    let deModelos = []; let fontesModelos = []; let observacoesModelos = [];
+    const biblioteca = await listarModelos();
+    if (biblioteca.length && claudeDisponivel()) {
+      const { usados, deFora } = await textosModelos();
+      if (deFora.length) avisos.push(`Modelos não considerados por limite de tamanho (os mais antigos): ${deFora.join(', ')}.`);
+      try {
+        const r = await sugerirComModelos(lido.dados, usados);
+        const ap = aplicarSugestoes(lido.dados, r.sugestoes);
+        deModelos = ap.aplicados; fontesModelos = ap.fontes; observacoesModelos = r.observacoesGerais || [];
+      } catch (err) {
+        avisos.push(`Não foi possível usar os modelos de outros projetos: ${err.message}.`);
+      }
+    } else if (biblioteca.length) {
+      avisos.push('Há modelos na biblioteca, mas só as tabelas de materiais são aproveitadas sem a leitura por IA (ANTHROPIC_API_KEY).');
+    }
+
+    const { dados, sugeridos } = completar(lido.dados);
+    dados.materiais = gerarMateriais(dados);
+    res.json({
+      dados, campos: lido.campos, sugeridos, deModelos, fontesModelos, observacoesModelos,
+      modelosNaBiblioteca: biblioteca.length,
+      materiaisModelos: await materiaisSugeridos(dados.materiais),
+      avisos, metodo: lido.metodo, ...revisao(dados),
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: `Não foi possível ler o arquivo: ${err.message}` });
+  }
+});
+
+// ---------- biblioteca de modelos ----------
+app.get('/api/modelos', async (_req, res) => {
+  res.json({ modelos: await listarModelos(), extensoes: EXTENSOES, usaIA: claudeDisponivel() });
+});
+
+app.post('/api/modelos', upload.array('arquivos', MAX_MODELOS), async (req, res) => {
+  try {
+    if (!req.files?.length) return res.status(400).json({ erro: 'Envie ao menos um arquivo.' });
+    const r = await salvarModelos(req.files);
+    res.json({ ...r, modelos: await listarModelos() });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: `Falha ao guardar os modelos: ${err.message}` });
+  }
+});
+
+app.delete('/api/modelos/:id', async (req, res) => {
+  const ok = await removerModelo(req.params.id);
+  if (!ok) return res.status(404).json({ erro: 'Modelo não encontrado.' });
+  res.json({ modelos: await listarModelos() });
+});
+
+app.post('/api/modelos/materiais', async (req, res) => {
+  res.json({ itens: await materiaisSugeridos(req.body?.materiais || []) });
+});
+
+app.post('/api/completar', (req, res) => {
+  const { dados, sugeridos } = completar(req.body?.dados || {});
+  res.json({ dados, sugeridos, ...revisao(dados) });
+});
+
+app.post('/api/revisar', (req, res) => {
+  res.json(revisao(req.body?.dados || {}));
+});
+
+async function gerar(tipo, dados) {
+  switch (tipo) {
+    case 'memorial': return { buf: await gerarMemorial(dados), nome: nomeArquivo(dados, 'memorial-descritivo', 'docx'), mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' };
+    case 'materiais': return { buf: await gerarPlanilhaMateriais(dados), nome: nomeArquivo(dados, 'tabela-de-materiais', 'xlsx'), mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
+    case 'unifilar': return { buf: desenharUnifilar(dados).toDXF(), nome: nomeArquivo(dados, 'diagrama-unifilar', 'dxf'), mime: 'application/dxf' };
+    case 'unifilar-svg': return { buf: Buffer.from(desenharUnifilar(dados).toSVG()), nome: nomeArquivo(dados, 'diagrama-unifilar', 'svg'), mime: 'image/svg+xml' };
+    case 'pacote': {
+      const zip = new JSZip();
+      for (const t of ['memorial', 'materiais', 'unifilar', 'unifilar-svg']) {
+        const r = await gerar(t, dados);
+        zip.file(r.nome, r.buf);
+      }
+      zip.file(nomeArquivo(dados, 'dados', 'json'), JSON.stringify(dados, null, 2));
+      return { buf: await zip.generateAsync({ type: 'nodebuffer' }), nome: nomeArquivo(dados, 'projeto', 'zip'), mime: 'application/zip' };
+    }
+    default: return null;
+  }
+}
+
+app.post('/api/gerar/:tipo', async (req, res) => {
+  try {
+    const dados = mesclar(projetoVazio(), req.body?.dados || {});
+    const erros = validar(dados).filter((m) => m.nivel === 'erro');
+    if (erros.length && !req.body?.ignorarErros) {
+      return res.status(422).json({ erro: 'Há pendências no projeto.', validacao: erros });
+    }
+    const r = await gerar(req.params.tipo, dados);
+    if (!r) return res.status(404).json({ erro: 'Tipo de documento desconhecido.' });
+    res.setHeader('Content-Type', r.mime);
+    res.setHeader('Content-Disposition', `attachment; filename="${r.nome}"`);
+    res.send(r.buf);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: `Falha ao gerar: ${err.message}` });
+  }
+});
+
+// Rotas da API inexistentes e erros (arquivo grande demais, campo errado, JSON inválido)
+// sempre respondem em JSON, para a página mostrar uma mensagem compreensível.
+app.use('/api', (_req, res) => res.status(404).json({ erro: 'Rota não encontrada. Atualize o app (git pull) e reinicie o servidor.' }));
+
+app.use((err, _req, res, _next) => {
+  console.error(err);
+  let status = err.status || err.statusCode || 500;
+  let erro = `Erro no servidor: ${err.message}`;
+  if (err instanceof multer.MulterError) {
+    status = 400;
+    if (err.code === 'LIMIT_FILE_SIZE') { status = 413; erro = `Arquivo grande demais (máximo ${LIMITE_MB} MB). Reduza o PDF ou envie só as páginas necessárias.`; }
+    else if (err.code === 'LIMIT_FILE_COUNT' || (err.code === 'LIMIT_UNEXPECTED_FILE' && err.field === 'arquivos')) erro = `Envie no máximo ${MAX_MODELOS} modelos por vez.`;
+    else if (err.code === 'LIMIT_UNEXPECTED_FILE') erro = 'Envie um arquivo por vez.';
+    else erro = `Falha no envio do arquivo: ${err.message}`;
+  } else if (err.type === 'entity.too.large') {
+    erro = 'Os dados do projeto são grandes demais para enviar de uma vez.';
+  } else if (err.type === 'entity.parse.failed') {
+    erro = 'Os dados enviados não são um JSON válido.';
+  }
+  res.status(status).json({ erro });
+});
+
+export default app;
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const porta = Number(process.env.PORT) || 3000;
+  app.listen(porta, () => {
+    console.log(`Gerador Solarmar em http://localhost:${porta}`);
+    console.log(claudeDisponivel() ? `Leitura com IA ativa (${MODELO_CLAUDE}).` : 'Leitura com IA desativada (defina ANTHROPIC_API_KEY para ler vistorias escaneadas/manuscritas).');
+  });
+}

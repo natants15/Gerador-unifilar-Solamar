@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gerador de Projeto Solarmar</title>
+  <link rel="stylesheet" href="estilo.css">
+</head>
+<body>
+  <header class="topo">
+    <div>
+      <h1>Gerador de Projeto de Microgeração</h1>
+      <p>Vistoria técnica Solarmar → memorial descritivo, tabela de materiais e diagrama unifilar</p>
+    </div>
+    <div class="acoes-topo">
+      <label class="btn sec">Abrir projeto (.json)<input type="file" id="abrirJson" accept=".json" hidden></label>
+      <button class="btn sec" id="salvarJson" disabled>Salvar projeto (.json)</button>
+    </div>
+  </header>
+
+  <ol class="passos">
+    <li data-passo="1" class="ativo">1. Vistoria</li>
+    <li data-passo="2">2. Revisão dos dados</li>
+    <li data-passo="3">3. Documentos</li>
+  </ol>
+
+  <main>
+    <!-- Passo 1 -->
+    <section id="passo1" class="painel">
+      <div class="pre-conc">
+        <div class="campo">
+          <label for="preConcessionaria">Concessionária do projeto</label>
+          <select id="preConcessionaria"><option value="">Detectar pelo documento</option></select>
+        </div>
+        <div class="campo">
+          <label for="preDistribuidora">Distribuidora</label>
+          <select id="preDistribuidora"><option value="">—</option></select>
+        </div>
+        <p class="nota">Escolher antes ajuda: a categoria, a bitola de entrada, o tipo de medição e os limites de potência já vêm sugeridos pela norma certa na revisão.</p>
+      </div>
+      <label id="zona" class="zona">
+        <input type="file" id="arquivo" accept=".pdf,.docx,.png,.jpg,.jpeg,.webp,.txt" hidden>
+        <strong>Arraste aqui a vistoria técnica</strong>
+        <span>ou clique para escolher (PDF, Word ou foto)</span>
+      </label>
+      <p id="statusLeitura" class="nota"></p>
+      <p class="nota">Não tem o arquivo? <button class="link" id="semArquivo">Preencher manualmente</button></p>
+
+      <div class="cartao modelos">
+        <h3>Modelos de outros projetos <span class="nota">(opcional)</span></h3>
+        <p class="nota">Anexe memoriais, unifilares (DXF), tabelas de materiais ou vistorias de projetos já aprovados. Eles ficam guardados na biblioteca e são considerados em todos os próximos projetos: a IA usa os modelos para sugerir o que a vistoria não traz (equipamentos, bitolas, categoria, responsável técnico), e as tabelas de materiais sugerem itens que a lista automática não tem.</p>
+        <label id="zonaModelos" class="zona pequena">
+          <input type="file" id="arquivosModelos" accept=".pdf,.docx,.xlsx,.dxf,.txt,.md,.csv" multiple hidden>
+          <strong>Adicionar modelos</strong>
+          <span>PDF, Word, Excel ou DXF (DWG: salve como DXF antes) – vários de uma vez</span>
+        </label>
+        <p id="statusModelos" class="nota"></p>
+        <ul id="listaModelos" class="lista-modelos"></ul>
+      </div>
+    </section>
+
+    <!-- Passo 2 -->
+    <section id="passo2" class="painel oculto">
+      <div id="avisosLeitura"></div>
+      <div class="grade">
+        <form id="form" autocomplete="off"></form>
+        <aside class="lateral">
+          <div class="cartao">
+            <h3>Pendências</h3>
+            <ul id="validacao" class="validacao"></ul>
+          </div>
+          <div class="cartao">
+            <h3>Resumo</h3>
+            <dl id="resumo" class="resumo"></dl>
+          </div>
+          <div class="cartao">
+            <h3>Pré-visualização do unifilar</h3>
+            <div id="preview" class="preview"></div>
+          </div>
+        </aside>
+      </div>
+
+      <div class="cartao">
+        <div class="cab-tabela">
+          <h3>Tabela de materiais</h3>
+          <div>
+            <button class="btn sec" id="addItem" type="button">+ Item</button>
+            <button class="btn sec" id="recalcMateriais" type="button" title="Refaz a lista com base nos dados atuais (descarta edições)">Recalcular lista</button>
+          </div>
+        </div>
+        <div id="sugMateriais" class="sug-materiais oculto"></div>
+        <table class="materiais">
+          <thead><tr><th>#</th><th>Grupo</th><th>Descrição</th><th>Un.</th><th>Qtd.</th><th></th></tr></thead>
+          <tbody id="tbMateriais"></tbody>
+        </table>
+      </div>
+
+      <div class="rodape-acoes">
+        <button class="btn sec" id="voltar1" type="button">Voltar</button>
+        <button class="btn" id="irGerar" type="button">Continuar para os documentos</button>
+      </div>
+    </section>
+
+    <!-- Passo 3 -->
+    <section id="passo3" class="painel oculto">
+      <div id="pendenciasGerar"></div>
+      <div class="docs">
+        <div class="doc">
+          <h3>Memorial descritivo</h3><p>Word (.docx), editável</p>
+          <button class="btn" data-gerar="memorial">Baixar memorial</button>
+        </div>
+        <div class="doc">
+          <h3>Tabela de materiais</h3><p>Excel (.xlsx)</p>
+          <button class="btn" data-gerar="materiais">Baixar tabela</button>
+        </div>
+        <div class="doc">
+          <h3>Diagrama unifilar</h3><p>DXF (abre no AutoCAD; salvar como DWG)</p>
+          <button class="btn" data-gerar="unifilar">Baixar unifilar</button>
+        </div>
+        <div class="doc destaque">
+          <h3>Pacote completo</h3><p>.zip com os três documentos e os dados do projeto</p>
+          <button class="btn" data-gerar="pacote">Baixar tudo</button>
+        </div>
+      </div>
+      <p class="nota">Os documentos saem como rascunho para a verificação da equipe técnica antes de seguir com o processo na concessionária.</p>
+      <div class="rodape-acoes">
+        <button class="btn sec" id="voltar2" type="button">Voltar à revisão</button>
+        <button class="btn sec" id="novo" type="button">Novo projeto</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
