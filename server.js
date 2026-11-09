@@ -3,7 +3,7 @@ import multer from 'multer';
 import JSZip from 'jszip';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LISTA_CONCESSIONARIAS } from './src/concessionarias.js';
+import { LISTA_CONCESSIONARIAS, getConcessionaria } from './src/concessionarias.js';
 import { lerVistoria, claudeDisponivel, MODELO_CLAUDE, sugerirComModelos, aplicarSugestoes } from './src/extracao.js';
 import { listarModelos, salvarModelos, removerModelo, textosModelos, materiaisSugeridos, EXTENSOES } from './src/modelos.js';
 import { completar, calcular, validar, gerarMateriais, mesclar, projetoVazio } from './src/projeto.js';
@@ -44,6 +44,18 @@ app.post('/api/extrair', upload.single('arquivo'), async (req, res) => {
     if (!req.file) return res.status(400).json({ erro: 'Envie o arquivo da vistoria.' });
     const lido = await lerVistoria(req.file.buffer, req.file.mimetype, req.file.originalname);
     const avisos = [...(lido.avisos || [])];
+
+    // Concessionária escolhida pelo usuário tem prioridade sobre a detectada no documento
+    const escolhida = getConcessionaria(req.body?.concessionaria);
+    if (escolhida) {
+      if (lido.dados.concessionaria && lido.dados.concessionaria !== escolhida.id) {
+        avisos.push(`O documento indica ${getConcessionaria(lido.dados.concessionaria)?.nome || lido.dados.concessionaria}, mas foi usada a concessionária escolhida (${escolhida.nome}).`);
+      }
+      lido.dados.concessionaria = escolhida.id;
+      const dist = String(req.body?.distribuidora || '');
+      lido.dados.distribuidora = escolhida.distribuidoras.includes(dist) ? dist : (lido.dados.distribuidora && escolhida.distribuidoras.includes(lido.dados.distribuidora) ? lido.dados.distribuidora : escolhida.distribuidoras[0]);
+      lido.campos = (lido.campos || []).filter((c) => c !== 'concessionaria' && c !== 'distribuidora');
+    }
 
     // Modelos de outros projetos: a IA sugere o que a vistoria não traz
     let deModelos = []; let fontesModelos = []; let observacoesModelos = [];

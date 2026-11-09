@@ -104,3 +104,7 @@ table.materiais { width: 100%; border-collapse: collapse; margin-top: 8px; }
 .sug-materiais li { display: flex; gap: 8px; align-items: center; }
 .sug-materiais li span { flex: 1; }
 .sug-materiais small { color: var(--cinza); }
+
+.pre-conc { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: flex-end; background: #fff; border: 1px solid var(--borda); border-radius: 10px; padding: 12px 16px; margin-bottom: 12px; }
+.pre-conc .campo { flex: 0 1 260px; }
+.pre-conc .nota { margin: 0; flex: 1 1 280px; }

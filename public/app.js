@@ -361,6 +361,10 @@ async function enviarArquivo(arquivo) {
   $('#statusLeitura').textContent = `Lendo "${arquivo.name}"…${estado.config.leituraIA ? ' (a leitura com IA pode levar até um minuto)' : ''}`;
   const fd = new FormData();
   fd.append('arquivo', arquivo);
+  if ($('#preConcessionaria').value) {
+    fd.append('concessionaria', $('#preConcessionaria').value);
+    fd.append('distribuidora', $('#preDistribuidora').value);
+  }
   try {
     const res = await fetch('/api/extrair', { method: 'POST', body: fd });
     const j = await res.json();
@@ -382,7 +386,7 @@ const zona = $('#zona');
 zona.addEventListener('drop', (e) => enviarArquivo(e.dataTransfer.files[0]));
 
 $('#semArquivo').addEventListener('click', async () => {
-  const r = await api('/api/completar', { dados: estado.config.projetoVazio });
+  const r = await api('/api/completar', { dados: { ...estado.config.projetoVazio, concessionaria: $('#preConcessionaria').value, distribuidora: $('#preDistribuidora').value } });
   if (r) abrirRevisao({ ...r, dados: { ...r.dados, materiais: r.materiaisPadrao } });
 });
 
@@ -445,6 +449,20 @@ function baixar(blob, nome) {
 // ---------- início ----------
 estado.config = await (await fetch('/api/config')).json();
 carregarModelos();
+
+// Concessionária escolhida antes da leitura (lembrada neste navegador)
+function preencherDistribuidoras() {
+  const c = estado.config.concessionarias.find((x) => x.id === $('#preConcessionaria').value);
+  $('#preDistribuidora').innerHTML = c ? c.distribuidoras.map((d) => `<option>${esc(d)}</option>`).join('') : '<option value="">—</option>';
+}
+$('#preConcessionaria').innerHTML += estado.config.concessionarias.map((c) => `<option value="${c.id}">${esc(c.nome)}${c.conferido ? '' : ' (tabela a conferir)'}</option>`).join('');
+try {
+  const salvo = JSON.parse(localStorage.getItem('preConcessionaria') || 'null');
+  if (salvo?.concessionaria) { $('#preConcessionaria').value = salvo.concessionaria; preencherDistribuidoras(); if (salvo.distribuidora) $('#preDistribuidora').value = salvo.distribuidora; }
+} catch { /* sem localStorage */ }
+const lembrar = () => { try { localStorage.setItem('preConcessionaria', JSON.stringify({ concessionaria: $('#preConcessionaria').value, distribuidora: $('#preDistribuidora').value })); } catch { /* ok */ } };
+$('#preConcessionaria').addEventListener('change', () => { preencherDistribuidoras(); lembrar(); });
+$('#preDistribuidora').addEventListener('change', lembrar);
 if (!estado.config.leituraIA) {
   $('#statusLeitura').textContent = 'Leitura de vistoria preenchida no computador (PDF/Word). Para vistorias escaneadas ou escritas à mão, configure a chave ANTHROPIC_API_KEY no servidor.';
 }
