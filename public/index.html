@@ -34,6 +34,18 @@
       </label>
       <p id="statusLeitura" class="nota"></p>
       <p class="nota">Não tem o arquivo? <button class="link" id="semArquivo">Preencher manualmente</button></p>
+
+      <div class="cartao modelos">
+        <h3>Modelos de outros projetos <span class="nota">(opcional)</span></h3>
+        <p class="nota">Anexe memoriais, unifilares (DXF), tabelas de materiais ou vistorias de projetos já aprovados. Eles ficam guardados na biblioteca e são considerados em todos os próximos projetos: a IA usa os modelos para sugerir o que a vistoria não traz (equipamentos, bitolas, categoria, responsável técnico), e as tabelas de materiais sugerem itens que a lista automática não tem.</p>
+        <label id="zonaModelos" class="zona pequena">
+          <input type="file" id="arquivosModelos" accept=".pdf,.docx,.xlsx,.dxf,.txt,.md,.csv" multiple hidden>
+          <strong>Adicionar modelos</strong>
+          <span>PDF, Word, Excel ou DXF (DWG: salve como DXF antes) – vários de uma vez</span>
+        </label>
+        <p id="statusModelos" class="nota"></p>
+        <ul id="listaModelos" class="lista-modelos"></ul>
+      </div>
     </section>
 
     <!-- Passo 2 -->
@@ -65,6 +77,7 @@
             <button class="btn sec" id="recalcMateriais" type="button" title="Refaz a lista com base nos dados atuais (descarta edições)">Recalcular lista</button>
           </div>
         </div>
+        <div id="sugMateriais" class="sug-materiais oculto"></div>
         <table class="materiais">
           <thead><tr><th>#</th><th>Grupo</th><th>Descrição</th><th>Un.</th><th>Qtd.</th><th></th></tr></thead>
           <tbody id="tbMateriais"></tbody>

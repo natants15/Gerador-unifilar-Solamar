@@ -304,3 +304,90 @@ export async function lerVistoria(buffer, mimetype, nome) {
   const r = lerVistoriaTexto(texto);
   return { ...r, metodo: 'texto', avisos: r.campos.length ? [] : ['Nenhum campo do formulário de vistoria foi reconhecido. Confira se é o modelo Solarmar ou preencha manualmente.'] };
 }
+
+// ---------- sugestões a partir dos modelos de outros projetos ----------
+
+export const CAMPOS_SUGERIVEIS = [
+  'concessionaria', 'distribuidora',
+  'entrada.categoria', 'entrada.bitolaFaseMm2', 'entrada.bitolaNeutroMm2', 'entrada.tipoCaixa', 'entrada.ramal', 'entrada.medicao',
+  'entrada.cargaInstaladaKw', 'entrada.aterramento',
+  'geracao.moduloMarca', 'geracao.moduloModelo', 'geracao.moduloPotenciaW', 'geracao.moduloInmetro',
+  'geracao.inversorMarca', 'geracao.inversorModelo', 'geracao.inversorPotenciaKw', 'geracao.inversorInmetro', 'geracao.inversorConexao',
+  'geracao.disjuntorInversorA', 'geracao.caboCAMm2', 'geracao.caboCCMm2', 'geracao.strings',
+  'telhado.estrutura',
+  'responsavel.nome', 'responsavel.titulo', 'responsavel.registro',
+  'observacoes',
+];
+
+const ESQUEMA_SUGESTOES = obj({
+  sugestoes: {
+    type: 'array',
+    items: obj({ campo: { type: 'string', enum: CAMPOS_SUGERIVEIS }, valor: { type: 'string' }, fonte: { type: 'string' } }),
+  },
+  observacoesGerais: { type: 'array', items: { type: 'string' } },
+});
+
+const INSTRUCOES_MODELOS = `Você ajuda a equipe técnica da Solarmar a preparar projetos de microgeração fotovoltaica (memorial descritivo, tabela de materiais e diagrama unifilar).
+Você recebe os dados do projeto atual (lidos da vistoria técnica) e documentos de projetos anteriores da empresa, já verificados pela equipe.
+Sugira valores apenas para campos que estão VAZIOS no projeto atual, quando os modelos mostrarem uma prática clara da empresa ou um caso equivalente. Exemplos:
+- responsável técnico, título e registro que aparecem nos modelos;
+- marca/modelo/registro INMETRO de módulo ou inversor quando o projeto atual já tem marca ou potência compatível com um modelo;
+- bitolas, categoria, tipo de caixa e disjuntor quando um modelo da mesma concessionária tem a mesma ligação e disjuntor geral;
+- padrões recorrentes de cabo CC/CA, string box, aterramento.
+Não sugira dados pessoais de clientes dos modelos (nome, endereço, UC). Não invente: se os modelos não sustentam um valor, não sugira.
+Em "fonte", diga em português qual modelo e qual trecho justificam a sugestão.
+Em "observacoesGerais", liste no máximo 5 diferenças relevantes entre o projeto atual e os modelos (ex.: item que os modelos sempre incluem e o atual não tem).`;
+
+/** Pede ao Claude sugestões para campos vazios com base na biblioteca de modelos. */
+export async function sugerirComModelos(dados, modelos) {
+  if (!modelos?.length) return { sugestoes: [], observacoesGerais: [] };
+  const client = new Anthropic();
+  const docs = modelos.map((m, i) => `<modelo indice="${i + 1}" arquivo="${m.nome}" tipo="${m.tipo}">\n${m.texto}\n</modelo>`).join('\n\n');
+  const atual = { ...dados };
+  delete atual.materiais;
+  const resp = await client.beta.messages.create({
+    model: MODELO_CLAUDE,
+    max_tokens: 16000,
+    system: INSTRUCOES_MODELOS,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'text', text: `Documentos de projetos anteriores:\n\n${docs}`, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: `Projeto atual (JSON):\n${JSON.stringify(atual, null, 2)}\n\nSugira valores para os campos vazios.` },
+      ],
+    }],
+    output_config: { effort: 'medium', format: { type: 'json_schema', schema: ESQUEMA_SUGESTOES } },
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+  });
+  if (resp.stop_reason === 'refusal') throw new Error('o modelo recusou a análise dos modelos');
+  if (resp.stop_reason === 'max_tokens') throw new Error('resposta cortada (max_tokens)');
+  const txt = resp.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+  return JSON.parse(txt);
+}
+
+const CAMPOS_NUMERICOS = new Set(['entrada.bitolaFaseMm2', 'entrada.bitolaNeutroMm2', 'entrada.cargaInstaladaKw', 'geracao.moduloPotenciaW', 'geracao.inversorPotenciaKw', 'geracao.disjuntorInversorA', 'geracao.caboCAMm2', 'geracao.caboCCMm2', 'geracao.strings']);
+
+/** Aplica as sugestões só em campos vazios. Retorna os caminhos preenchidos e as fontes. */
+export function aplicarSugestoes(dados, sugestoes = []) {
+  const aplicados = []; const fontes = [];
+  for (const s of sugestoes) {
+    if (!CAMPOS_SUGERIVEIS.includes(s.campo)) continue;
+    const ks = s.campo.split('.');
+    const alvo = ks.slice(0, -1).reduce((o, k) => o?.[k], dados);
+    const k = ks.at(-1);
+    if (!alvo || (alvo[k] !== '' && alvo[k] !== null && alvo[k] !== undefined)) continue;
+    let v = String(s.valor ?? '').trim();
+    if (!v) continue;
+    if (CAMPOS_NUMERICOS.has(s.campo)) { const nv = n(v); if (!Number.isFinite(nv)) continue; v = nv; }
+    if (s.campo === 'concessionaria') {
+      const id = ['CPFL', 'ENEL', 'EDP', 'ELEKTRO'].find((c) => v.toUpperCase().includes(c)) || (/NEOENERGIA/i.test(v) ? 'ELEKTRO' : null);
+      if (!id) continue;
+      v = id;
+    }
+    alvo[k] = v;
+    aplicados.push(s.campo);
+    fontes.push({ campo: s.campo, valor: v, fonte: s.fonte });
+  }
+  return { aplicados, fontes };
+}

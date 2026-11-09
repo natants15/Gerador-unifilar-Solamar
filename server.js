@@ -4,7 +4,8 @@ import JSZip from 'jszip';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LISTA_CONCESSIONARIAS } from './src/concessionarias.js';
-import { lerVistoria, claudeDisponivel, MODELO_CLAUDE } from './src/extracao.js';
+import { lerVistoria, claudeDisponivel, MODELO_CLAUDE, sugerirComModelos, aplicarSugestoes } from './src/extracao.js';
+import { listarModelos, salvarModelos, removerModelo, textosModelos, materiaisSugeridos, EXTENSOES } from './src/modelos.js';
 import { completar, calcular, validar, gerarMateriais, mesclar, projetoVazio } from './src/projeto.js';
 import { desenharUnifilar } from './src/unifilar.js';
 import { gerarMemorial } from './src/memorial.js';
@@ -42,13 +43,63 @@ app.post('/api/extrair', upload.single('arquivo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ erro: 'Envie o arquivo da vistoria.' });
     const lido = await lerVistoria(req.file.buffer, req.file.mimetype, req.file.originalname);
+    const avisos = [...(lido.avisos || [])];
+
+    // Modelos de outros projetos: a IA sugere o que a vistoria não traz
+    let deModelos = []; let fontesModelos = []; let observacoesModelos = [];
+    const biblioteca = await listarModelos();
+    if (biblioteca.length && claudeDisponivel()) {
+      const { usados, deFora } = await textosModelos();
+      if (deFora.length) avisos.push(`Modelos não considerados por limite de tamanho (os mais antigos): ${deFora.join(', ')}.`);
+      try {
+        const r = await sugerirComModelos(lido.dados, usados);
+        const ap = aplicarSugestoes(lido.dados, r.sugestoes);
+        deModelos = ap.aplicados; fontesModelos = ap.fontes; observacoesModelos = r.observacoesGerais || [];
+      } catch (err) {
+        avisos.push(`Não foi possível usar os modelos de outros projetos: ${err.message}.`);
+      }
+    } else if (biblioteca.length) {
+      avisos.push('Há modelos na biblioteca, mas só as tabelas de materiais são aproveitadas sem a leitura por IA (ANTHROPIC_API_KEY).');
+    }
+
     const { dados, sugeridos } = completar(lido.dados);
     dados.materiais = gerarMateriais(dados);
-    res.json({ dados, campos: lido.campos, sugeridos, avisos: lido.avisos || [], metodo: lido.metodo, ...revisao(dados) });
+    res.json({
+      dados, campos: lido.campos, sugeridos, deModelos, fontesModelos, observacoesModelos,
+      modelosNaBiblioteca: biblioteca.length,
+      materiaisModelos: await materiaisSugeridos(dados.materiais),
+      avisos, metodo: lido.metodo, ...revisao(dados),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ erro: `Não foi possível ler o arquivo: ${err.message}` });
   }
+});
+
+// ---------- biblioteca de modelos ----------
+app.get('/api/modelos', async (_req, res) => {
+  res.json({ modelos: await listarModelos(), extensoes: EXTENSOES, usaIA: claudeDisponivel() });
+});
+
+app.post('/api/modelos', upload.array('arquivos', 30), async (req, res) => {
+  try {
+    if (!req.files?.length) return res.status(400).json({ erro: 'Envie ao menos um arquivo.' });
+    const r = await salvarModelos(req.files);
+    res.json({ ...r, modelos: await listarModelos() });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ erro: `Falha ao guardar os modelos: ${err.message}` });
+  }
+});
+
+app.delete('/api/modelos/:id', async (req, res) => {
+  const ok = await removerModelo(req.params.id);
+  if (!ok) return res.status(404).json({ erro: 'Modelo não encontrado.' });
+  res.json({ modelos: await listarModelos() });
+});
+
+app.post('/api/modelos/materiais', async (req, res) => {
+  res.json({ itens: await materiaisSugeridos(req.body?.materiais || []) });
 });
 
 app.post('/api/completar', (req, res) => {

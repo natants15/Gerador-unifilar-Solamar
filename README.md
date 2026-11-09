@@ -30,6 +30,17 @@ ANTHROPIC_API_KEY=sk-ant-... npm start
 
 O modelo usado é `claude-opus-5-5` (troque com `CLAUDE_MODEL`). Em qualquer caso os dados passam pela tela de revisão antes de gerar os documentos.
 
+## Modelos de outros projetos
+
+No passo 1 há um segundo campo, **Modelos de outros projetos**, para anexar memoriais, unifilares (DXF), tabelas de materiais ou vistorias de projetos já aprovados. Os arquivos ficam numa biblioteca no servidor (`data/modelos`, ou a pasta definida em `MODELOS_DIR`) e valem para todos os projetos seguintes; a lista mostra o que está guardado e permite remover.
+
+Como são usados:
+
+- **Com a leitura por IA** (`ANTHROPIC_API_KEY`): o texto dos modelos vai junto com os dados da vistoria e o Claude sugere valores **só para campos vazios** (equipamentos, bitolas, categoria, caixa, responsável técnico...), citando o modelo de origem. Esses campos aparecem em roxo na revisão, e a tela lista as diferenças relevantes entre o projeto atual e os modelos. Dados pessoais de clientes dos modelos não são reaproveitados. Limite padrão de 200 mil caracteres (`MODELOS_LIMITE_CARACTERES`), dos mais recentes para os mais antigos; os que ficarem de fora são avisados.
+- **Sem IA**: as tabelas de materiais (.xlsx com colunas Descrição / Unidade / Quantidade) sugerem itens que a lista automática não tem, com botão para adicionar (a quantidade fica para a equipe preencher).
+
+DWG não é lido: salve como DXF no AutoCAD antes de enviar.
+
 ## O que a vistoria não traz
 
 A vistoria atual não tem: concessionária, bitola dos cabos de entrada, categoria/caixa do padrão, modelo e registro INMETRO de módulos e inversor, responsável técnico. Esses campos são completados na tela de revisão (bitola e categoria são sugeridas pela tabela da norma).

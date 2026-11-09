@@ -88,3 +88,19 @@ table.materiais { width: 100%; border-collapse: collapse; margin-top: 8px; }
 .doc.destaque { border-color: var(--azul); }
 .carregando { opacity: .6; pointer-events: none; }
 @media (max-width: 640px) { main, .topo, .passos { padding-left: 16px; padding-right: 16px; } }
+
+.zona.pequena { min-height: 90px; padding: 14px; }
+.zona.pequena strong { font-size: 15px; }
+.modelos { margin-top: 16px; }
+.modelos h3 .nota { font-weight: 400; font-size: 13px; }
+.lista-modelos { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.lista-modelos li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid #eef0f3; border-radius: 6px; }
+.lista-modelos .nome { flex: 1; overflow-wrap: anywhere; }
+.lista-modelos .tipo { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--azul-claro); color: var(--azul); }
+.campo.modelo input, .campo.modelo select, .campo.modelo textarea { background: #eef0ff; border-color: #b8bff0; }
+.tag.modelo { background: #eef0ff; color: #3b3fb5; }
+.sug-materiais { background: #f7f8ff; border: 1px solid #d9ddf7; border-radius: 8px; padding: 8px 12px; margin-top: 8px; }
+.sug-materiais ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.sug-materiais li { display: flex; gap: 8px; align-items: center; }
+.sug-materiais li span { flex: 1; }
+.sug-materiais small { color: var(--cinza); }

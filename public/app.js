@@ -7,6 +7,8 @@ const estado = {
   dados: null,
   lidos: new Set(),
   sugeridos: new Set(),
+  deModelos: new Map(), // caminho -> fonte
+  materiaisModelos: [],
   materiaisEditados: false,
 };
 
@@ -116,7 +118,7 @@ function irPara(n) {
 // ---------- formulário ----------
 function renderForm() {
   const f = $('#form');
-  const legenda = `<div class="legenda-cores"><span><span class="tag lido">vistoria</span> lido do documento</span><span><span class="tag sugerido">norma</span> sugerido pela norma/cálculo – confira</span></div>`;
+  const legenda = `<div class="legenda-cores"><span><span class="tag lido">vistoria</span> lido do documento</span><span><span class="tag sugerido">norma</span> sugerido pela norma/cálculo – confira</span><span><span class="tag modelo">modelo</span> sugerido por projetos anteriores – confira</span></div>`;
   f.innerHTML = legenda + SECOES.map((s) => `
     <fieldset${s.fechada ? ' class="fechada"' : ''}><legend>${s.titulo}</legend><div class="campos">
       ${s.campos.map(renderCampo).join('')}
@@ -125,8 +127,9 @@ function renderForm() {
 
 function renderCampo(c) {
   const v = get(estado.dados, c.p);
-  const cls = ['campo', c.largo ? 'largo' : '', c.tipo === 'check' ? 'check' : '', estado.lidos.has(c.p) ? 'lido' : '', estado.sugeridos.has(c.p) ? 'sugerido' : ''].filter(Boolean).join(' ');
-  const tag = estado.lidos.has(c.p) ? '<span class="tag lido">vistoria</span>' : estado.sugeridos.has(c.p) ? '<span class="tag sugerido">norma</span>' : '';
+  const doModelo = estado.deModelos.has(c.p);
+  const cls = ['campo', c.largo ? 'largo' : '', c.tipo === 'check' ? 'check' : '', estado.lidos.has(c.p) ? 'lido' : '', doModelo ? 'modelo' : '', !doModelo && estado.sugeridos.has(c.p) ? 'sugerido' : ''].filter(Boolean).join(' ');
+  const tag = estado.lidos.has(c.p) ? '<span class="tag lido">vistoria</span>' : doModelo ? `<span class="tag modelo" title="${esc(estado.deModelos.get(c.p))}">modelo</span>` : estado.sugeridos.has(c.p) ? '<span class="tag sugerido">norma</span>' : '';
   const id = 'f_' + c.p.replace(/\./g, '_');
   let input;
   if (c.tipo === 'select') {
@@ -149,8 +152,8 @@ function aoEditar(ev) {
   const def = SECOES.flatMap((s) => s.campos).find((c) => c.p === p);
   if (def?.tipo === 'number' && v !== '') { const nv = Number(String(v).replace(',', '.')); v = Number.isFinite(nv) ? nv : v; }
   set(estado.dados, p, v);
-  estado.lidos.delete(p); estado.sugeridos.delete(p);
-  $(`[data-campo="${p}"]`)?.classList.remove('lido', 'sugerido');
+  estado.lidos.delete(p); estado.sugeridos.delete(p); estado.deModelos.delete(p);
+  $(`[data-campo="${p}"]`)?.classList.remove('lido', 'sugerido', 'modelo');
 
   // Regras dependentes
   if (p === 'entrada.categoria') {
@@ -251,6 +254,67 @@ $('#recalcMateriais').addEventListener('click', async () => {
   estado.dados.materiais = r.materiaisPadrao;
   estado.materiaisEditados = false;
   renderMateriais();
+  const sm = await api('/api/modelos/materiais', { materiais: estado.dados.materiais });
+  if (sm) { estado.materiaisModelos = sm.itens; renderSugMateriais(); }
+});
+
+const rotulo = (p) => SECOES.flatMap((x) => x.campos).find((c) => c.p === p)?.l || p;
+
+function renderSugMateriais() {
+  const box = $('#sugMateriais');
+  const itens = estado.materiaisModelos || [];
+  box.classList.toggle('oculto', !itens.length);
+  if (!itens.length) return;
+  box.innerHTML = `<strong>Itens usados em projetos anteriores que não estão na lista</strong> <small>(tabelas de materiais da biblioteca)</small>
+    <ul>${itens.map((it, i) => `<li><span>${esc(it.descricao)} <small>${esc(it.unidade)} · ${esc(it.grupo)}</small></span><button class="btn sec" type="button" data-addsug="${i}">Adicionar</button></li>`).join('')}</ul>`;
+}
+$('#sugMateriais').addEventListener('click', (ev) => {
+  const i = ev.target.dataset.addsug;
+  if (i === undefined) return;
+  const [it] = estado.materiaisModelos.splice(Number(i), 1);
+  (estado.dados.materiais ||= []).push({ grupo: 'Projetos anteriores', descricao: it.descricao, unidade: it.unidade, quantidade: '' });
+  estado.materiaisEditados = true;
+  renderMateriais(); renderSugMateriais();
+  $$('#tbMateriais tr').at(-1)?.querySelector('[data-m="quantidade"]')?.focus();
+});
+
+// ---------- biblioteca de modelos ----------
+const TIPOS = { memorial: 'memorial', unifilar: 'unifilar', materiais: 'materiais', vistoria: 'vistoria', outro: 'outro' };
+function renderModelos(lista) {
+  $('#listaModelos').innerHTML = lista.length
+    ? lista.map((m) => `<li><span class="tipo">${TIPOS[m.tipo] || m.tipo}</span><span class="nome">${esc(m.nome)}</span><small class="nota">${new Date(m.criadoEm).toLocaleDateString('pt-BR')}</small><button class="remover" title="Remover da biblioteca" data-rmodelo="${m.id}">×</button></li>`).join('')
+    : '<li class="nota">Nenhum modelo na biblioteca ainda.</li>';
+}
+async function carregarModelos() {
+  try { const r = await (await fetch('/api/modelos')).json(); renderModelos(r.modelos); } catch { /* sem biblioteca */ }
+}
+async function enviarModelos(arquivos) {
+  if (!arquivos?.length) return;
+  const fd = new FormData();
+  [...arquivos].forEach((f) => fd.append('arquivos', f));
+  $('#statusModelos').textContent = `Guardando ${arquivos.length} arquivo(s)…`;
+  try {
+    const res = await fetch('/api/modelos', { method: 'POST', body: fd });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.erro);
+    renderModelos(j.modelos);
+    const msgs = [];
+    if (j.adicionados.length) msgs.push(`${j.adicionados.length} modelo(s) adicionado(s).`);
+    j.recusados.forEach((r) => msgs.push(`${r.nome}: ${r.motivo}`));
+    $('#statusModelos').textContent = msgs.join(' ');
+  } catch (err) { $('#statusModelos').textContent = `Erro: ${err.message}`; }
+  $('#arquivosModelos').value = '';
+}
+$('#arquivosModelos').addEventListener('change', (e) => enviarModelos(e.target.files));
+const zonaM = $('#zonaModelos');
+['dragenter', 'dragover'].forEach((t) => zonaM.addEventListener(t, (e) => { e.preventDefault(); zonaM.classList.add('sobre'); }));
+['dragleave', 'drop'].forEach((t) => zonaM.addEventListener(t, (e) => { e.preventDefault(); zonaM.classList.remove('sobre'); }));
+zonaM.addEventListener('drop', (e) => enviarModelos(e.dataTransfer.files));
+$('#listaModelos').addEventListener('click', async (ev) => {
+  const id = ev.target.dataset.rmodelo;
+  if (!id || !confirm('Remover este modelo da biblioteca?')) return;
+  const res = await fetch(`/api/modelos/${id}`, { method: 'DELETE' });
+  if (res.ok) renderModelos((await res.json()).modelos);
 });
 
 // ---------- API ----------
@@ -270,15 +334,21 @@ function abrirRevisao(r, avisos = [], metodo = '') {
   estado.dados = r.dados;
   estado.lidos = new Set(r.campos || []);
   estado.sugeridos = new Set(r.sugeridos || []);
+  estado.deModelos = new Map((r.fontesModelos || []).map((f) => [f.campo, f.fonte || 'projeto anterior']));
+  estado.materiaisModelos = r.materiaisModelos || [];
   estado.materiaisEditados = false;
   const nLidos = estado.lidos.size;
   const info = metodo === 'claude' ? `Leitura feita com IA (${estado.config.modelo}).` : metodo === 'texto' ? 'Leitura pelo texto do arquivo.' : '';
   const blocos = [];
   if (metodo) blocos.push(`<div class="avisos info"><strong>${nLidos} campo(s) lidos da vistoria.</strong> ${info} Confira os campos em verde, revise os sugeridos em amarelo e complete o que a vistoria não traz (bitolas, modelos de módulo e inversor, registro INMETRO, responsável técnico).</div>`);
+  if (r.fontesModelos?.length || r.observacoesModelos?.length) {
+    blocos.push(`<div class="avisos info"><strong>${r.fontesModelos?.length || 0} campo(s) sugeridos a partir de ${r.modelosNaBiblioteca} modelo(s) de outros projetos</strong> (em roxo; passe o mouse na etiqueta para ver a origem).${r.fontesModelos?.length ? `<ul>${r.fontesModelos.map((f) => `<li>${esc(rotulo(f.campo))}: <b>${esc(f.valor)}</b> – ${esc(f.fonte)}</li>`).join('')}</ul>` : ''}${r.observacoesModelos?.length ? `<p><strong>Comparação com os modelos:</strong></p><ul>${r.observacoesModelos.map((o) => `<li>${esc(o)}</li>`).join('')}</ul>` : ''}</div>`);
+  }
   if (avisos.length) blocos.push(`<div class="avisos"><strong>Atenção na leitura:</strong><ul>${avisos.map((a) => `<li>${esc(a)}</li>`).join('')}</ul></div>`);
   $('#avisosLeitura').innerHTML = blocos.join('');
   renderForm();
   renderMateriais();
+  renderSugMateriais();
   mostrarRevisao(r);
   irPara(2);
 }
@@ -374,6 +444,7 @@ function baixar(blob, nome) {
 
 // ---------- início ----------
 estado.config = await (await fetch('/api/config')).json();
+carregarModelos();
 if (!estado.config.leituraIA) {
   $('#statusLeitura').textContent = 'Leitura de vistoria preenchida no computador (PDF/Word). Para vistorias escaneadas ou escritas à mão, configure a chave ANTHROPIC_API_KEY no servidor.';
 }
